@@ -3,12 +3,13 @@ import pandas as pd
 from ase.io import read, write
 import os
 from ase.constraints import FixAtoms
-from scipy.interpolate import LinearNDInterpolator, RBFInterpolator,make_interp_spline
+from scipy.interpolate import LinearNDInterpolator, RBFInterpolator, make_interp_spline
+from scipy.signal import savgol_filter
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from scipy.ndimage import gaussian_filter
 from FastTrack.structure_processing import optimize_structure_with_fixed_atom
-import matplotlib.ticker as ticker
+from pymatgen.core import Structure
 
 
 def optimize_point_in_grid(idx, path,interpolator, start_point, end_point, regularization_coeff=0.1):
@@ -110,7 +111,8 @@ def optimize_point_with_neighbors(idx, path, interpolator, grid_size=0.4, grid_p
     
     return min_energy_point
 
-def Migration_Energy(potential_file, s_point ,e_point, num_points = 11, iteration_=10, output="optimized_path.csv",out_pic="Migration_Energy.jpg"):
+def Migration_Energy(potential_file, s_point, e_point, num_points=11, iteration_=10,
+                     output="optimized_path.csv"):
 
     csv_file = potential_file    #"potential.csv"
     df = pd.read_csv(csv_file)
@@ -168,19 +170,9 @@ def Migration_Energy(potential_file, s_point ,e_point, num_points = 11, iteratio
     max_idx = np.argmax(path_energies)
     max_point = path[max_idx]
     print(f"Highest energy point: {max_point}")
-    print("E1------",energies_shifted)
+    print("E1------ [" + ", ".join(f"{v:.8f}" for v in energies_shifted) + "]")
 
-    
-    plt.plot(range(len(path_energies)), energies_shifted, marker='o')
-    plt.xlabel("Path Point Index")
-    plt.ylabel("Energy")
-    plt.title("Energy Along the Optimized Path")
-
-    #plt.show()
-    plt.savefig(out_pic) 
-    plt.close()
-
-    return max(energies_shifted) , path,energies_shifted
+    return max(energies_shifted), path, energies_shifted
 
 
 def Migration_Energy_op(path, atom_type, di, outf , POSCAR_rm ,out_xsf, e0):   
@@ -197,7 +189,8 @@ def Migration_Energy_op(path, atom_type, di, outf , POSCAR_rm ,out_xsf, e0):
     write(out_xsf, trajectory, format="xsf")
 
     energies_min = np.min(path_energies)
-    energies_shifted = path_energies - energies_min  
+    energies_shifted = path_energies - energies_min
+    print("E2------ [" + ", ".join(f"{v:.8f}" for v in energies_shifted) + "]")
 
     plot_energy_profile_fixed_labels(
         image_indices1 =  np.linspace(0, 1, len(energies_shifted)),
@@ -289,111 +282,154 @@ def potential_draw(energy_b , min_energy,output_potential, output_path , out_htm
 def plot_energy_profile_fixed_labels(
     image_indices1, energies1,
     image_indices2=None, energies2=None,
-    output_filename="energy_profile_subplot.svg",
-    save_plot=True, show_plot=False
+    output_filename="Migration_Energy_op.jpg",
+    save_plot=True, show_plot=False,
+    title=None,
 ):
-    #
-    label1_text = "Fixed"
-    color1_val = "#4a90d9"  
-    marker1_style = "o"
+    """
+    Plot fixed-lattice and (optional) relaxed-lattice migration energy
+    profiles with Savitzky-Golay smoothing + cubic-spline interpolation.
 
+    Font family is set to 'sans-serif' only (no specific font name), so that
+    the plot renders on headless servers that may not ship Arial/DejaVu.
+    Output is written as JPG.
+    """
+    label1_text = "Fixed"
+    color1_val = "#4a90d9"
+    marker1_style = "o"
     label2_text = "Optimized"
-    color2_val = "#e17c72"  
+    color2_val = "#e17c72"
     marker2_style = "s"
 
     x_label_text = "Path distance"
     y_label_text = "Energy (eV)"
-    #y_limits_val = (0, 0.41)
     num_smooth_points_val = 300
-    spline_k_val = 2
-    figsize_val = (5, 4)     #(2.5, 2.2) 
+    spline_k_val = 3
+    figsize_val = (4, 3)
 
-    # 
-    prominent_label_fontsize = 13
     plt.rcParams.update({
         'font.family': 'sans-serif',
-        #'font.sans-serif': ['Arial'],
-        'font.size': 15,
-        'axes.labelsize': 15,
-        'axes.labelcolor': '#444444',  
-        'xtick.color': '#444444',
-        'ytick.color': '#444444',
-        'xtick.labelsize': 15,
-        'ytick.labelsize': 15,
-        'lines.linewidth': 1.3,
-        'lines.markersize': 4,
+        'font.size': 14,
+        'axes.labelsize': 16,
+        'axes.titlesize': 16,
+        'xtick.labelsize': 14,
+        'ytick.labelsize': 14,
+        'legend.fontsize': 14,
+        'lines.linewidth': 2.0,
+        'lines.markersize': 5,
     })
 
     fig, ax = plt.subplots(figsize=figsize_val)
 
-    # 
-    img_idx1_np = np.asarray(image_indices1)
-    en1_np = np.asarray(energies1)
+    def _plot_one(x, y, color, marker, label):
+        x_np = np.asarray(x, dtype=float)
+        y_np = np.asarray(y, dtype=float)
+        n = len(x_np)
 
-    x_smooth1 = np.linspace(img_idx1_np.min(), img_idx1_np.max(), num_smooth_points_val)
-    if len(img_idx1_np) > spline_k_val:
-        spl1 = make_interp_spline(img_idx1_np, en1_np, k=spline_k_val)
-        y_smooth1 = spl1(x_smooth1)
-        ax.plot(x_smooth1, y_smooth1, color=color1_val)
-    else:
-        ax.plot(img_idx1_np, en1_np, color=color1_val)
-    ax.scatter(img_idx1_np, en1_np, marker=marker1_style,
-               facecolors='none', edgecolors=color1_val, linewidths=1.0)
+        # Savitzky-Golay filter: window must be odd, >= polyorder+2, <= n.
+        y_filt = y_np
+        if n >= 5:
+            win = min(7, n if n % 2 == 1 else n - 1)
+            poly = min(3, win - 2)
+            if win >= 3 and poly >= 1:
+                try:
+                    y_filt = savgol_filter(y_np, win, poly)
+                except Exception:
+                    y_filt = y_np
 
-    # 
-    if image_indices2 is not None and energies2 is not None:
-        img_idx2_np = np.asarray(image_indices2)
-        en2_np = np.asarray(energies2)
-
-        x_smooth2 = np.linspace(img_idx2_np.min(), img_idx2_np.max(), num_smooth_points_val)
-        if len(img_idx2_np) > spline_k_val:
-            spl2 = make_interp_spline(img_idx2_np, en2_np, k=spline_k_val)
-            y_smooth2 = spl2(x_smooth2)
-            ax.plot(x_smooth2, y_smooth2, color=color2_val)
+        if n > spline_k_val:
+            x_smooth = np.linspace(x_np.min(), x_np.max(), num_smooth_points_val)
+            try:
+                y_smooth = make_interp_spline(x_np, y_filt, k=spline_k_val)(x_smooth)
+                ax.plot(x_smooth, y_smooth, color=color, label=label)
+            except Exception:
+                ax.plot(x_np, y_filt, color=color, label=label)
         else:
-            ax.plot(img_idx2_np, en2_np, color=color2_val)
-        ax.scatter(img_idx2_np, en2_np, marker=marker2_style,
-                   facecolors='none', edgecolors=color2_val, linewidths=1.0)
+            ax.plot(x_np, y_np, color=color, label=label)
 
-    # 
+        ax.scatter(x_np, y_np, marker=marker,
+                   facecolors='none', edgecolors=color, linewidths=1.0)
+
+    _plot_one(image_indices1, energies1, color1_val, marker1_style, label1_text)
+    if image_indices2 is not None and energies2 is not None:
+        _plot_one(image_indices2, energies2, color2_val, marker2_style, label2_text)
+
     ax.set_xlabel(x_label_text)
     ax.set_ylabel(y_label_text)
+    if title:
+        ax.set_title(title)
 
-    #if y_limits_val:
-    #    ax.set_ylim(y_limits_val)
+    ax.set_xticks([])
+    ax.set_xlim(0, 1)
+    ax.legend()
+    ax.grid(True, linestyle=':', alpha=0.6, color='grey')
 
-    ax.grid(False)
-    ax.yaxis.set_major_locator(plt.MaxNLocator(nbins=5))
-    ax.xaxis.set_major_locator(plt.MaxNLocator(nbins=5))
-    ax.xaxis.set_major_formatter(ticker.FormatStrFormatter('%g'))
-
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-
-    # 
-    ax.text(0.5, 0.9, label1_text,
-            transform=ax.transAxes,
-            color=color1_val,
-            fontsize=prominent_label_fontsize,
-            ha='center', va='center',
-            bbox=dict(facecolor='white', alpha=0.6, edgecolor='none', pad=1.5))
-
-    if image_indices2 is not None and energies2 is not None:
-        ax.text(0.5, 0.1, label2_text,
-                transform=ax.transAxes,
-                color=color2_val,
-                fontsize=prominent_label_fontsize,
-                ha='center', va='center',
-                bbox=dict(facecolor='white', alpha=0.6, edgecolor='none', pad=1.5))
-
-    
     if save_plot and output_filename:
-        plt.tight_layout(pad=0.3)
-        plt.savefig(output_filename, format='svg', transparent=True)
+        plt.tight_layout()
+        plt.savefig(output_filename, format='jpg', dpi=300, bbox_inches='tight')
         print(f"fig save as: {output_filename}")
 
     if show_plot:
-        plt.tight_layout(pad=0.3)
+        plt.tight_layout()
         plt.show()
 
     plt.close(fig)
+
+
+def export_path_to_cif(
+    structure_file: str,
+    hop_list: list,
+    migrating_specie: str,
+    out_cif: str = "percolation_path.cif",
+    add_midpoints: bool = True,
+    midpoint_specie: str = "H",
+    n_inserts: int = 6,
+):
+    vis = Structure.from_file(structure_file).copy()
+    mids = []
+    path_points = []
+    prev_fc = None
+
+    for h in hop_list:
+        hop = h["hop"]
+        is_fc_raw = hop.isite.frac_coords
+        es_fc_raw = hop.esite.frac_coords
+
+        if prev_fc is None:
+            is_fc = is_fc_raw % 1.0
+            path_points.append(is_fc)
+        else:
+            is_fc = prev_fc
+
+        delta = es_fc_raw - is_fc_raw
+        delta = delta - np.round(delta)
+        es_fc = is_fc + delta
+        path_points.append(es_fc)
+        prev_fc = es_fc
+
+        if add_midpoints:
+            cart_delta = np.dot(delta, vis.lattice.matrix)
+            chord_len = np.linalg.norm(cart_delta)
+            if chord_len > 1e-8:
+                ref = np.array([1.0, 0.0, 0.0])
+                if abs(np.dot(cart_delta, ref) / chord_len) > 0.9:
+                    ref = np.array([0.0, 1.0, 0.0])
+                n_hat = np.cross(cart_delta, ref)
+                n_hat = n_hat / np.linalg.norm(n_hat)
+                arc_amp = 0.05 * chord_len
+                for kk in range(1, n_inserts + 1):
+                    t = kk / (n_inserts + 1)
+                    base_fc = is_fc + t * delta
+                    base_cart = vis.lattice.get_cartesian_coords(base_fc)
+                    offset_cart = arc_amp * np.sin(np.pi * t) * n_hat
+                    p_cart = base_cart + offset_cart
+                    p_fc = vis.lattice.get_fractional_coords(p_cart) % 1.0
+                    mids.append(p_fc)
+
+    for fc in path_points:
+        vis.append(migrating_specie, fc % 1.0)
+    for fc in mids:
+        vis.append(midpoint_specie, fc)
+
+    vis.to(out_cif)
+    print(f"Saved CIF: {out_cif}")

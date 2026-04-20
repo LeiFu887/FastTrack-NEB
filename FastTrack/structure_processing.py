@@ -50,7 +50,7 @@ class StructureOptimizer:
         """
         Optimize crystal structure (only optimize atomic coordinates).
         """
-        optimizer = BFGS(self.atoms)
+        optimizer = BFGS(self.atoms, logfile=None)
         optimizer.run(fmax=self.fmax, steps=self.steps)
         self._save_structure()
 
@@ -72,7 +72,7 @@ class StructureOptimizer:
         self.atoms.append(Atom(atom_type, position=cart_pos))
 
        
-        optimizer = BFGS(self.atoms ,maxstep =0.1)
+        optimizer = BFGS(self.atoms, maxstep=0.1, logfile=None)
         optimizer.run(fmax=self.fmax, steps=self.steps)
 
         
@@ -87,13 +87,15 @@ class StructureOptimizer:
 
 
 
-def expand_cell_by_lattice_length(input_file,outputfile, min_length=7):
+def expand_cell_by_lattice_length(input_file, outputfile, min_length=10):
     """
-    Expand the structure to ensure that each lattice vector (a, b, c) is at least greater than min_1ength.
-    If a lattice vector is less than min_1ength, expand the cell in that direction.
-    
-    :param structure: pymatgen  Structure 
-    :param min_length:  7 Å
+    Expand the structure to ensure that each lattice vector (a, b, c) is at
+    least greater than ``min_length``. If a lattice vector is shorter than
+    ``min_length``, expand the cell in that direction.
+
+    :param input_file: path to the input structure file
+    :param outputfile: path to write the expanded POSCAR
+    :param min_length: target minimum lattice length in Angstrom (default 10)
     """
     
     structure = Structure.from_file(input_file)
